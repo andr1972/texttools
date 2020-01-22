@@ -22,22 +22,39 @@ struct ConvInfo {
     EolType ToEolType;
 };
 
-void detectEols(char *data, ConvInfo &convInfo) {
+void putch(char ch, char *output, size_t &outpos)
+{
+    output[outpos] = ch;
+    outpos++;
+}
+
+void putEol(EolType eolType, char *output, size_t &outpos)
+{
+    if (!output) return;
+    switch (eolType)
+    {
+        case etUnix: putch(10,output, outpos); break;
+        case etWindows:
+            putch(13,output, outpos);
+            putch(10,output, outpos); break;
+        case etMac:  putch(13,output, outpos); break;
+    }
+}
+
+void procChunk(char *data, char *output, ConvInfo &convInfo) {
     char unpaired = convInfo.LastUnpaired;
     convInfo.EolsCount = 0;
     convInfo.BadEolsCount = 0;
     size_t sizeOthers = 0;
-    for (int i=0; i<convInfo.ChunkSize; i++) {
+    size_t outpos;
+    for (size_t i=0; i<convInfo.ChunkSize; i++) {
         char c = data[i];
         if (c==13)
         {
             if (unpaired!=10) {
-                switch (convInfo.ToEolType)
-                {
-                    case etUnix: convInfo.BadEolsCount++; break;
-                    case etWindows: break;
-                    case etMac: break;
-                }
+                if (convInfo.ToEolType==etUnix)
+                    convInfo.BadEolsCount++;
+                putEol(convInfo.ToEolType, output, outpos);
                 convInfo.EolsCount++;
                 unpaired=13;
             }
@@ -46,12 +63,9 @@ void detectEols(char *data, ConvInfo &convInfo) {
         else if (c==10)
         {
             if (unpaired!=13) {
-                switch (convInfo.ToEolType)
-                {
-                    case etUnix: break;
-                    case etWindows: convInfo.BadEolsCount++; break;
-                    case etMac: convInfo.BadEolsCount++; break;
-                }
+                if (convInfo.ToEolType!=etUnix)
+                    convInfo.BadEolsCount++;
+                putEol(convInfo.ToEolType, output, outpos);
                 convInfo.EolsCount++;
                 unpaired=10;
             }
@@ -59,6 +73,11 @@ void detectEols(char *data, ConvInfo &convInfo) {
         }
         else {
             unpaired = 0;
+            if (output)
+            {
+                output[outpos] = c;
+                outpos++;
+            }
             sizeOthers++;
         }
     }
@@ -74,7 +93,8 @@ int main() {
     convInfo.LastUnpaired=0;
     convInfo.ChunkSize = mixsample.size();
     convInfo.ToEolType = etWindows;
-    detectEols(mixsample.data(), convInfo);
+    procChunk(mixsample.data(), NULL, convInfo);
+
     /*cout << countEols(, 0) << endl;
     cout << countEols(macsample, 10) << endl;
     cout << countEols(macsample, 0) << endl;
