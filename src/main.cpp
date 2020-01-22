@@ -22,15 +22,23 @@ struct ConvInfo {
     EolType ToEolType;
 };
 
-int countEols(vector<char> &v, ConvInfo &convInfo) {
+void detectEols(char *data, ConvInfo &convInfo) {
     char unpaired = convInfo.LastUnpaired;
-    int count = 0;
-    for (int i=0; i<v.size(); i++) {
-        char c = v[i];
+    convInfo.EolsCount = 0;
+    convInfo.BadEolsCount = 0;
+    size_t sizeOthers = 0;
+    for (int i=0; i<convInfo.ChunkSize; i++) {
+        char c = data[i];
         if (c==13)
         {
             if (unpaired!=10) {
-                count++;
+                switch (convInfo.ToEolType)
+                {
+                    case etUnix: convInfo.BadEolsCount++; break;
+                    case etWindows: break;
+                    case etMac: break;
+                }
+                convInfo.EolsCount++;
                 unpaired=13;
             }
             else unpaired=0;
@@ -38,21 +46,35 @@ int countEols(vector<char> &v, ConvInfo &convInfo) {
         else if (c==10)
         {
             if (unpaired!=13) {
-                count++;
+                switch (convInfo.ToEolType)
+                {
+                    case etUnix: break;
+                    case etWindows: convInfo.BadEolsCount++; break;
+                    case etMac: convInfo.BadEolsCount++; break;
+                }
+                convInfo.EolsCount++;
                 unpaired=10;
             }
             else unpaired=0;
         }
-        else unpaired=0;
+        else {
+            unpaired = 0;
+            sizeOthers++;
+        }
     }
     convInfo.LastUnpaired = unpaired;
-    return count;
+    if (convInfo.ToEolType==etWindows)
+        convInfo.NeedSize = sizeOthers+2*convInfo.EolsCount;
+    else
+        convInfo.NeedSize = sizeOthers+convInfo.EolsCount;
 }
 
 int main() {
     ConvInfo convInfo;
     convInfo.LastUnpaired=0;
-    cout << countEols(mixsample, convInfo) << endl;
+    convInfo.ChunkSize = mixsample.size();
+    convInfo.ToEolType = etWindows;
+    detectEols(mixsample.data(), convInfo);
     /*cout << countEols(, 0) << endl;
     cout << countEols(macsample, 10) << endl;
     cout << countEols(macsample, 0) << endl;
