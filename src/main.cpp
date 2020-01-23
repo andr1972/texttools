@@ -344,11 +344,12 @@ int main(int argc, char * argv[]) {
     } else if (string(argv[1])=="--help")
     {
         cout << "usage:" <<endl;
-        cout << "eolconv eolType maskList [r] [conv]" << endl;
+        cout << "eolconv eolType maskList [r] [conv] [bin]" << endl;
         cout << "eolType is one of {unix,win,mac}" << endl;
         cout << "maskList is one mask or list divided by colon" << endl;
         cout << "r = recursive subdirectories" << endl;
         cout << "conv = convert, else only print files need convert" << endl << endl;
+        cout << "bin = show binary files, containing byte 0" << endl << endl;
         cout << "note: on Linux Bash is needed backslash \\ before asterisk *" << endl;
         cout << "example:" <<endl;
         cout << "eolconv unix \\*.cpp:\\*.h conv" << endl;
