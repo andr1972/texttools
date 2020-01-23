@@ -48,7 +48,7 @@ void procChunk(char *data, char *output, ConvInfo &convInfo) {
     char unpaired = convInfo.LastUnpaired;
     size_t sizeOthers = 0;
     convInfo.EolsCount = convInfo.BadEolsCount = 0;
-    size_t outpos;
+    size_t outpos = 0;
     for (size_t i=0; i<convInfo.ChunkSize; i++) {
         char c = data[i];
         if (c==13)
@@ -166,7 +166,19 @@ vector<string> collectFilesRecur(const string path, const vector<string> &masks)
     return all_matching_files;
 }
 
-size_t procFile(string relativePath, EolType eolType, bool bConvert)
+
+string getTempName(string filename) {
+    const int maxTrials = 100;
+    for (int i=0; i<maxTrials; i++)
+    {
+        string result = filename+".tmp"+to_string(i);
+        if (!boost::filesystem::exists(result)) return result;
+    }
+    cout << "Cant create temp name for " << filename << endl;
+    exit(-1);
+}
+
+size_t procFileStage(string relativePath, EolType eolType, bool bConvert, ConvInfo &genconvInfo, size_t outneeded)
 {
     ifstream ifs;
     ifs.open(relativePath, ios::binary | ios::in);
@@ -175,6 +187,12 @@ size_t procFile(string relativePath, EolType eolType, bool bConvert)
     ifs.seekg(0, std::ios::beg );
     char *buf;
     const int64_t MaxChunkSize = 64*1024;
+    char *outbuf = nullptr;
+    ofstream ofs;
+    if (bConvert) {
+        ofs.open(getTempName(relativePath), ios::binary | ios::out);
+        outbuf = new char[outneeded];
+    }
     size_t maxNeeded = 0;
     int64_t ChunkSize = min(MaxChunkSize, fsize);
     buf = new char[ChunkSize];
@@ -183,23 +201,38 @@ size_t procFile(string relativePath, EolType eolType, bool bConvert)
     convInfo.LastUnpaired=0;
     convInfo.ToEolType = eolType;
     int64_t sumReaded = 0;
-    size_t EolsCount=0, BadEolsCount=0;
+    genconvInfo.EolsCount=0;
+    genconvInfo.BadEolsCount=0;
     do {
         ifs.read(buf, min(ChunkSize, fsize-sumReaded));
         bytesReaded = ifs.gcount();
         sumReaded += bytesReaded;
         if (ifs.eof()) break;
         convInfo.ChunkSize = bytesReaded;
-        procChunk(buf, nullptr, convInfo);
-        EolsCount+=convInfo.EolsCount;
-        BadEolsCount+=convInfo.BadEolsCount;
+        procChunk(buf, outbuf, convInfo);
+        genconvInfo.EolsCount+=convInfo.EolsCount;
+        genconvInfo.BadEolsCount+=convInfo.BadEolsCount;
+        if (outbuf)
+            ofs.write(outbuf, convInfo.NeedSize);
         maxNeeded = max(maxNeeded, convInfo.NeedSize);
     } while (bytesReaded==ChunkSize && sumReaded<fsize);
     delete buf;
+    delete outbuf;
+    if (ofs.is_open()) ofs.close();
     ifs.close();
-    if (BadEolsCount>0)
-        printf("%s %ld/%ld\n",relativePath.c_str(), BadEolsCount, EolsCount);
     return maxNeeded;
+}
+
+void procFile(string relativePath, EolType eolType, bool bConvert)
+{
+    ConvInfo genconvInfo;
+    size_t needed = procFileStage(relativePath, eolType, false, genconvInfo, 0);
+    if (genconvInfo.BadEolsCount>0) {
+        printf("%s %ld/%ld\n", relativePath.c_str(), genconvInfo.BadEolsCount, genconvInfo.EolsCount);
+        if (bConvert)
+            procFileStage(relativePath, eolType, true, genconvInfo, needed);
+    }
+
 }
 
 int procCommandLine(int argc, char * argv[])
@@ -221,7 +254,7 @@ int procCommandLine(int argc, char * argv[])
     masks = maskToRegular(masks);
     auto v = collectFiles(".", masks);
     for (auto fname: v)
-        cout << procFile(fname, eolType, false) << endl;
+        procFile(fname, eolType, true);
     return 0;
 }
 
