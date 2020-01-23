@@ -47,6 +47,7 @@ void putEol(EolType eolType, char *output, size_t &outpos)
 void procChunk(char *data, char *output, ConvInfo &convInfo) {
     char unpaired = convInfo.LastUnpaired;
     size_t sizeOthers = 0;
+    convInfo.EolsCount = convInfo.BadEolsCount = 0;
     size_t outpos;
     for (size_t i=0; i<convInfo.ChunkSize; i++) {
         char c = data[i];
@@ -165,7 +166,7 @@ vector<string> collectFilesRecur(const string path, const vector<string> &masks)
     return all_matching_files;
 }
 
-void procFile(string relativePath, EolType eolType)
+size_t procFile(string relativePath, EolType eolType, bool bConvert)
 {
     ifstream ifs;
     ifs.open(relativePath, ios::binary | ios::in);
@@ -174,6 +175,7 @@ void procFile(string relativePath, EolType eolType)
     ifs.seekg(0, std::ios::beg );
     char *buf;
     const int64_t MaxChunkSize = 64*1024;
+    size_t maxNeeded = 0;
     int64_t ChunkSize = min(MaxChunkSize, fsize);
     buf = new char[ChunkSize];
     streamsize bytesReaded = ChunkSize;
@@ -181,6 +183,7 @@ void procFile(string relativePath, EolType eolType)
     convInfo.LastUnpaired=0;
     convInfo.ToEolType = eolType;
     int64_t sumReaded = 0;
+    size_t EolsCount=0, BadEolsCount=0;
     do {
         ifs.read(buf, min(ChunkSize, fsize-sumReaded));
         bytesReaded = ifs.gcount();
@@ -188,11 +191,15 @@ void procFile(string relativePath, EolType eolType)
         if (ifs.eof()) break;
         convInfo.ChunkSize = bytesReaded;
         procChunk(buf, nullptr, convInfo);
+        EolsCount+=convInfo.EolsCount;
+        BadEolsCount+=convInfo.BadEolsCount;
+        maxNeeded = max(maxNeeded, convInfo.NeedSize);
     } while (bytesReaded==ChunkSize && sumReaded<fsize);
     delete buf;
     ifs.close();
-    if (convInfo.BadEolsCount>0)
-        printf("%s %ld/%ld\n",relativePath.c_str(), convInfo.BadEolsCount, convInfo.EolsCount);
+    if (BadEolsCount>0)
+        printf("%s %ld/%ld\n",relativePath.c_str(), BadEolsCount, EolsCount);
+    return maxNeeded;
 }
 
 int procCommandLine(int argc, char * argv[])
@@ -214,7 +221,7 @@ int procCommandLine(int argc, char * argv[])
     masks = maskToRegular(masks);
     auto v = collectFiles(".", masks);
     for (auto fname: v)
-        procFile(fname, eolType);
+        cout << procFile(fname, eolType, false) << endl;
     return 0;
 }
 
