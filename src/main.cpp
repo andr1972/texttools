@@ -23,6 +23,7 @@ struct ConvInfo {
     size_t BadEolsCount = 0;
     char LastUnpaired = 0;
     EolType ToEolType;
+    bool hasZeroByte;
 };
 
 void putch(char ch, char *output, size_t &outpos)
@@ -49,8 +50,11 @@ void procChunk(char *data, char *output, ConvInfo &convInfo) {
     size_t sizeOthers = 0;
     convInfo.EolsCount = convInfo.BadEolsCount = 0;
     size_t outpos = 0;
+    convInfo.hasZeroByte = false;
     for (size_t i=0; i<convInfo.ChunkSize; i++) {
         char c = data[i];
+        if (c==0)
+            convInfo.hasZeroByte = true;
         if (c==13)
         {
             if (unpaired!=10) {
@@ -130,7 +134,7 @@ bool ORfilters(string s, vector<boost::regex> &filters)
 }
 
 
-vector<string> collectFiles(const string path, const vector<string> &masks)
+vector<string> collectFilenames(const string path, const vector<string> &masks)
 {
     vector<boost::regex> my_filters;
     for (string mask: masks) {
@@ -143,12 +147,43 @@ vector<string> collectFiles(const string path, const vector<string> &masks)
     {
         if (!boost::filesystem::is_regular_file(i->status())) continue;
         if (!ORfilters(i->path().filename().string(), my_filters)) continue;
-        all_matching_files.push_back(i->path().string());
+        all_matching_files.push_back(i->path().filename().string());
+    }
+    return all_matching_files;
+}
+
+vector<string> collectDirs(const string path)
+{
+    vector<string> all_matching_files;
+    boost::filesystem::directory_iterator end_itr; // Default ctor yields past-the-end
+    for (boost::filesystem::directory_iterator i(path); i != end_itr; ++i)
+    {
+        if (!boost::filesystem::is_directory(i->status())) continue;
+        string dirname = i->path().filename().string();
+        if (dirname!=".git")
+            all_matching_files.push_back(dirname);
     }
     return all_matching_files;
 }
 
 vector<string> collectFilesRecur(const string path, const vector<string> &masks)
+{
+    vector<string> list;
+    vector<string> listF = collectFilenames(path, masks);
+    for (string fname: listF)
+        list.push_back(path+"/"+fname);
+    listF.clear();
+    vector<string> listD = collectDirs(path);
+    for (string dirname: listD)
+    {
+        vector<string> tmp = collectFilesRecur(path+"/"+dirname, masks);
+        list.insert(list.end(), tmp.begin(), tmp.end());
+    }
+    return list;
+}
+
+/*I cant sinmply use below function, because I not go to .git folders*/
+vector<string> collectFilesRecurBoost(const string path, const vector<string> &masks)
 {
     vector<boost::regex> my_filters;
     for (string mask: masks) {
@@ -158,6 +193,23 @@ vector<string> collectFilesRecur(const string path, const vector<string> &masks)
     vector<string> all_matching_files;
     boost::filesystem::recursive_directory_iterator end_itr; // Default ctor yields past-the-end
     for (boost::filesystem::recursive_directory_iterator i(path); i != end_itr; ++i)
+    {
+        if (!boost::filesystem::is_regular_file(i->status())) continue;
+        if (!ORfilters(i->path().filename().string(), my_filters)) continue;
+        all_matching_files.push_back(i->path().string());
+    }
+    return all_matching_files;
+}
+vector<string> collectFiles(const string path, const vector<string> &masks)
+{
+    vector<boost::regex> my_filters;
+    for (string mask: masks) {
+        boost::regex my_filter(mask);
+        my_filters.push_back(my_filter);
+    }
+    vector<string> all_matching_files;
+    boost::filesystem::directory_iterator end_itr; // Default ctor yields past-the-end
+    for (boost::filesystem::directory_iterator i(path); i != end_itr; ++i)
     {
         if (!boost::filesystem::is_regular_file(i->status())) continue;
         if (!ORfilters(i->path().filename().string(), my_filters)) continue;
@@ -205,6 +257,7 @@ size_t procFileStage(string relativePath, EolType eolType, bool bConvert, ConvIn
     int64_t sumReaded = 0;
     genconvInfo.EolsCount=0;
     genconvInfo.BadEolsCount=0;
+    genconvInfo.hasZeroByte = false;
     do {
         ifs.read(buf, min(ChunkSize, fsize-sumReaded));
         bytesReaded = ifs.gcount();
@@ -214,6 +267,8 @@ size_t procFileStage(string relativePath, EolType eolType, bool bConvert, ConvIn
         procChunk(buf, outbuf, convInfo);
         genconvInfo.EolsCount+=convInfo.EolsCount;
         genconvInfo.BadEolsCount+=convInfo.BadEolsCount;
+        if (convInfo.hasZeroByte)
+            genconvInfo.hasZeroByte = true;
         if (outbuf)
             ofs.write(outbuf, convInfo.NeedSize);
         maxNeeded = max(maxNeeded, convInfo.NeedSize);
@@ -229,16 +284,17 @@ size_t procFileStage(string relativePath, EolType eolType, bool bConvert, ConvIn
     return maxNeeded;
 }
 
-void procFile(string relativePath, EolType eolType, bool bConvert)
+void procFile(string relativePath, EolType eolType, bool bConvert, bool bShowBinary)
 {
     ConvInfo genconvInfo;
     size_t needed = procFileStage(relativePath, eolType, false, genconvInfo, 0);
-    if (genconvInfo.BadEolsCount>0) {
+    if (genconvInfo.hasZeroByte && bShowBinary)
+        printf("%s binary\n", relativePath.c_str());
+    if (genconvInfo.BadEolsCount>0 && !genconvInfo.hasZeroByte) {
         printf("%s %ld/%ld\n", relativePath.c_str(), genconvInfo.BadEolsCount, genconvInfo.EolsCount);
         if (bConvert)
             procFileStage(relativePath, eolType, true, genconvInfo, needed);
     }
-
 }
 
 int procCommandLine(int argc, char * argv[])
@@ -257,10 +313,27 @@ int procCommandLine(int argc, char * argv[])
     string masklist = argv[2];
     vector<string> masks;
     boost::split(masks,masklist,boost::is_any_of(":"));
+    bool bRecursive = false;
+    bool bConvert = false;
+    bool bShowBinary = false;
+    for (int i=3; i<argc; i++)
+    {
+        string arg = argv[i];
+        if(arg=="r")
+            bRecursive = true;
+        else if(arg=="conv")
+            bConvert = true;
+        else if(arg=="bin")
+            bShowBinary = true;
+    }
     masks = maskToRegular(masks);
-    auto v = collectFiles(".", masks);
+    vector<string> v;
+    if (bRecursive)
+        v = collectFilesRecur(".", masks);
+    else
+        v = collectFiles(".", masks);
     for (auto fname: v)
-        procFile(fname, eolType, true);
+        procFile(fname, eolType, bConvert, bShowBinary);
     return 0;
 }
 
