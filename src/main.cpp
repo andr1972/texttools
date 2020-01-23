@@ -189,8 +189,10 @@ size_t procFileStage(string relativePath, EolType eolType, bool bConvert, ConvIn
     const int64_t MaxChunkSize = 64*1024;
     char *outbuf = nullptr;
     ofstream ofs;
+    string tempName = "";
     if (bConvert) {
-        ofs.open(getTempName(relativePath), ios::binary | ios::out);
+        tempName = getTempName(relativePath);
+        ofs.open(tempName, ios::binary | ios::out);
         outbuf = new char[outneeded];
     }
     size_t maxNeeded = 0;
@@ -220,6 +222,10 @@ size_t procFileStage(string relativePath, EolType eolType, bool bConvert, ConvIn
     delete outbuf;
     if (ofs.is_open()) ofs.close();
     ifs.close();
+    if (bConvert && tempName!="") {
+        boost::filesystem::remove(relativePath);
+        boost::filesystem::rename(tempName, relativePath);
+    }
     return maxNeeded;
 }
 
