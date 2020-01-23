@@ -1,4 +1,5 @@
 # EOL Converter
 Simple tool to convert between Unix,Win and Mac eols
 
-Auto detect eol style, can be bad (mixed)
+Auto detect eol style. Input Eols can be in mixed style.
+Convert files in current folder, optionally with subdirectories, omit .git folder and "binary" files = files containg byte 0.
