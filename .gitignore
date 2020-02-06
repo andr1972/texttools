@@ -1,4 +1,5 @@
-eolconverter
+src/utf8bom
+src/eolconv 
 CMakeFiles/
 CMakeCache.txt
 Makefile
