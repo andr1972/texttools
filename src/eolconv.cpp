@@ -148,9 +148,12 @@ void procFile(string relativePath, EolType eolType, bool bConvert, bool bShowBin
     if (genconvInfo.hasZeroByte && bShowBinary)
         printf("%s binary\n", relativePath.c_str());
     if (genconvInfo.BadEolsCount>0 && !genconvInfo.hasZeroByte) {
-        printf("%s %ld/%ld\n", relativePath.c_str(), genconvInfo.BadEolsCount, genconvInfo.EolsCount);
-        if (bConvert)
+        printf("%s %ld/%ld", relativePath.c_str(), genconvInfo.BadEolsCount, genconvInfo.EolsCount);
+        if (bConvert) {
             procFileStage(relativePath, eolType, true, genconvInfo, needed);
+            printf(" --- converted\n");
+        }
+        else printf("\n");
     }
 }
 
