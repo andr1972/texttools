@@ -6,14 +6,6 @@
 
 using namespace std;
 
-vector<char> unixsample {'g','k', 10, 'd', 10, 10, 'j', 10};
-vector<char> macsample {13, 'g','k', 13, 'd', 13, 13, 'j', 13};
-vector<char> winsample {'g','k', 13,10, 'd', 13,10, 13,10, 'j', 13,10};
-vector<char> badwinsample {'g','k', 10,13, 'd', 10,13, 10,13, 'j', 10,13};
-vector<char> mixsample {'g',10,10,'a','b',13,'v',10,13,10,'h', 'k', 13,10, 'd', 13,10, 13,10, 'j', 13,10,13};
-vector<char> win5 {13,10,13,10,13,10,13,10,13,10};
-vector<char> win5bad {13,10,10,13,13,10,10,13,13,10};
-
 enum EolType {etUnix, etWindows, etMac};
 
 struct ConvInfo {
