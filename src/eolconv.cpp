@@ -119,7 +119,6 @@ size_t procFileStage(string relativePath, EolType eolType, bool bConvert, ConvIn
         ifs.read(buf, min(ChunkSize, fsize-sumReaded));
         bytesReaded = ifs.gcount();
         sumReaded += bytesReaded;
-        if (ifs.eof()) break;
         convInfo.ChunkSize = bytesReaded;
         procChunk(buf, outbuf, convInfo);
         genconvInfo.EolsCount+=convInfo.EolsCount;
@@ -129,6 +128,7 @@ size_t procFileStage(string relativePath, EolType eolType, bool bConvert, ConvIn
         if (outbuf)
             ofs.write(outbuf, convInfo.NeedSize);
         maxNeeded = max(maxNeeded, convInfo.NeedSize);
+        if (ifs.eof()) break;
     } while (bytesReaded==ChunkSize && sumReaded<fsize);
     delete buf;
     delete outbuf;

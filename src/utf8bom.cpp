@@ -7,88 +7,22 @@
 
 using namespace std;
 
-enum EolType {etUnix, etWindows, etMac};
+enum ActionType {atAdd, atRemove};
+
+const uint8_t UTF_16LE[2] = {0xFF, 0xFE};
+const uint8_t UTF_16BE[2] = {0xFE, 0xFF};
+const uint8_t UTF_32LE[4] = {0xFF, 0xFE, 0x00, 0x00};
+const uint8_t UTF_32BE[4] = {0x00, 0x00, 0xFE, 0xFF};
+const uint8_t UTF_8[3] = {0xEF, 0xBB, 0xBF};
+
+enum BomType {btNone, btUTF8, btUTF16LE, btUTF16BE, btUTF32LE, btUTF32BE};
 
 struct ConvInfo {
-    size_t ChunkSize;
-    size_t NeedSize;
-    size_t EolsCount = 0;
-    size_t BadEolsCount = 0;
-    char LastUnpaired = 0;
-    EolType ToEolType;
+    BomType bomType;
     bool hasZeroByte;
 };
 
-void putch(char ch, char *output, size_t &outpos)
-{
-    output[outpos] = ch;
-    outpos++;
-}
-
-void putEol(EolType eolType, char *output, size_t &outpos)
-{
-    if (!output) return;
-    switch (eolType)
-    {
-        case etUnix: putch(10,output, outpos); break;
-        case etWindows:
-            putch(13,output, outpos);
-            putch(10,output, outpos); break;
-        case etMac:  putch(13,output, outpos); break;
-    }
-}
-
-void procChunk(char *data, char *output, ConvInfo &convInfo) {
-    char unpaired = convInfo.LastUnpaired;
-    size_t sizeOthers = 0;
-    convInfo.EolsCount = convInfo.BadEolsCount = 0;
-    size_t outpos = 0;
-    convInfo.hasZeroByte = false;
-    for (size_t i=0; i<convInfo.ChunkSize; i++) {
-        char c = data[i];
-        if (c==0)
-            convInfo.hasZeroByte = true;
-        if (c==13)
-        {
-            if (unpaired!=10) {
-                if (convInfo.ToEolType==etUnix)
-                    convInfo.BadEolsCount++;
-                putEol(convInfo.ToEolType, output, outpos);
-                convInfo.EolsCount++;
-                unpaired=13;
-            }
-            else unpaired=0;
-        }
-        else if (c==10)
-        {
-            if (unpaired!=13) {
-                if (convInfo.ToEolType!=etUnix)
-                    convInfo.BadEolsCount++;
-                putEol(convInfo.ToEolType, output, outpos);
-                convInfo.EolsCount++;
-                unpaired=10;
-            }
-            else unpaired=0;
-        }
-        else {
-            unpaired = 0;
-            if (output)
-            {
-                output[outpos] = c;
-                outpos++;
-            }
-            sizeOthers++;
-        }
-    }
-    convInfo.LastUnpaired = unpaired;
-    if (convInfo.ToEolType==etWindows)
-        convInfo.NeedSize = sizeOthers+2*convInfo.EolsCount;
-    else
-        convInfo.NeedSize = sizeOthers+convInfo.EolsCount;
-}
-
-size_t procFileStage(string relativePath, EolType eolType, bool bConvert, ConvInfo &genconvInfo, size_t outneeded)
-{
+ConvInfo detect(string relativePath) {
     ifstream ifs;
     ifs.open(relativePath, ios::binary | ios::in);
     ifs.seekg(0, std::ios::end );
@@ -96,61 +30,128 @@ size_t procFileStage(string relativePath, EolType eolType, bool bConvert, ConvIn
     ifs.seekg(0, std::ios::beg );
     char *buf;
     const int64_t MaxChunkSize = 64*1024;
-    char *outbuf = nullptr;
-    ofstream ofs;
-    string tempName = "";
-    if (bConvert) {
-        tempName = getTempName(relativePath);
-        ofs.open(tempName, ios::binary | ios::out);
-        outbuf = new char[outneeded];
-    }
-    size_t maxNeeded = 0;
     int64_t ChunkSize = min(MaxChunkSize, fsize);
     buf = new char[ChunkSize];
-    streamsize bytesReaded = ChunkSize;
     ConvInfo convInfo;
-    convInfo.LastUnpaired=0;
-    convInfo.ToEolType = eolType;
+    convInfo.hasZeroByte = false;
     int64_t sumReaded = 0;
-    genconvInfo.EolsCount=0;
-    genconvInfo.BadEolsCount=0;
-    genconvInfo.hasZeroByte = false;
+    char BOM[4];
+    ifs.read(BOM, 4);
+    streamsize bytesReaded = ifs.gcount();
+    convInfo.bomType = btNone;
+    if (bytesReaded>=4)
+    {
+        if (memcmp(BOM, UTF_32LE, 4)==0) convInfo.bomType = btUTF32LE;
+        else if (memcmp(BOM, UTF_32BE, 4)==0) convInfo.bomType = btUTF32BE;
+    }
+    if (bytesReaded>=3)
+    {
+        if (memcmp(BOM, UTF_8, 3)==0) convInfo.bomType = btUTF8;
+    }
+    if (bytesReaded>=2)
+    {
+        if (memcmp(BOM, UTF_16LE, 4)==0) convInfo.bomType = btUTF16LE;
+        else if (memcmp(BOM, UTF_16BE, 4)==0) convInfo.bomType = btUTF16BE;
+    }
     do {
-        ifs.read(buf, min(ChunkSize, fsize-sumReaded));
+        ifs.read(buf, min(ChunkSize, fsize - sumReaded));
         bytesReaded = ifs.gcount();
         sumReaded += bytesReaded;
+        for (size_t i=0; i<bytesReaded; i++) {
+            char c = buf[i];
+            if (c==0)
+                convInfo.hasZeroByte = true;
+        }
         if (ifs.eof()) break;
-        convInfo.ChunkSize = bytesReaded;
-        procChunk(buf, outbuf, convInfo);
-        genconvInfo.EolsCount+=convInfo.EolsCount;
-        genconvInfo.BadEolsCount+=convInfo.BadEolsCount;
-        if (convInfo.hasZeroByte)
-            genconvInfo.hasZeroByte = true;
-        if (outbuf)
-            ofs.write(outbuf, convInfo.NeedSize);
-        maxNeeded = max(maxNeeded, convInfo.NeedSize);
     } while (bytesReaded==ChunkSize && sumReaded<fsize);
     delete buf;
-    delete outbuf;
-    if (ofs.is_open()) ofs.close();
     ifs.close();
-    if (bConvert && tempName!="") {
+    return convInfo;
+}
+
+ConvInfo addBOM8(string relativePath) {
+    ifstream ifs;
+    ifs.open(relativePath, ios::binary | ios::in);
+    ifs.seekg(0, std::ios::end);
+    int64_t fsize = (int64_t) ifs.tellg();
+    ifs.seekg(0, std::ios::beg);
+    char *buf;
+    const int64_t MaxChunkSize = 64 * 1024;
+    int64_t ChunkSize = min(MaxChunkSize, fsize);
+    buf = new char[ChunkSize];
+    string tempName = getTempName(relativePath);
+    ofstream ofs;
+    ofs.open(tempName, ios::binary | ios::out);
+    ofs.write((char*)UTF_8, 3);
+    int64_t sumReaded = 0;
+    streamsize bytesReaded = 0;
+    do {
+        ifs.read(buf, min(ChunkSize, fsize - sumReaded));
+        bytesReaded = ifs.gcount();
+        sumReaded += bytesReaded;
+        ofs.write(buf, bytesReaded);
+        if (ifs.eof()) break;
+    } while (bytesReaded==ChunkSize && sumReaded<fsize);
+    ofs.close();
+    delete buf;
+    ifs.close();
+    if (tempName!="") {
         boost::filesystem::remove(relativePath);
         boost::filesystem::rename(tempName, relativePath);
     }
-    return maxNeeded;
 }
 
-void procFile(string relativePath, EolType eolType, bool bConvert, bool bShowBinary)
+ConvInfo removeBOM8(string relativePath) {
+    ifstream ifs;
+    ifs.open(relativePath, ios::binary | ios::in);
+    ifs.seekg(0, std::ios::end);
+    int64_t fsize = (int64_t) ifs.tellg();
+    ifs.seekg(3, std::ios::beg);
+    char *buf;
+    const int64_t MaxChunkSize = 64 * 1024;
+    int64_t ChunkSize = min(MaxChunkSize, fsize);
+    buf = new char[ChunkSize];
+    string tempName = getTempName(relativePath);
+    ofstream ofs;
+    ofs.open(tempName, ios::binary | ios::out);
+    int64_t sumReaded = 0;
+    streamsize bytesReaded = 0;
+    do {
+        ifs.read(buf, min(ChunkSize, fsize - sumReaded));
+        bytesReaded = ifs.gcount();
+        sumReaded += bytesReaded;
+        ofs.write(buf, bytesReaded);
+        if (ifs.eof()) break;
+    } while (bytesReaded==ChunkSize && sumReaded<fsize);
+    delete buf;
+    ofs.close();
+    ifs.close();
+    if (tempName!="") {
+        boost::filesystem::remove(relativePath);
+        boost::filesystem::rename(tempName, relativePath);
+    }
+}
+
+void procFile(string relativePath, ActionType action, bool bConvert, bool bShowBinary)
 {
-    ConvInfo genconvInfo;
-    size_t needed = procFileStage(relativePath, eolType, false, genconvInfo, 0);
-    if (genconvInfo.hasZeroByte && bShowBinary)
+    ConvInfo convInfo = detect(relativePath);
+    if (action==atAdd) {
+        if (convInfo.bomType!=btNone) return;
+    }
+    else {
+        if (convInfo.bomType!=btUTF8) return;
+    }
+    if (convInfo.hasZeroByte && bShowBinary)
         printf("%s binary\n", relativePath.c_str());
-    if (genconvInfo.BadEolsCount>0 && !genconvInfo.hasZeroByte) {
-        printf("%s %ld/%ld", relativePath.c_str(), genconvInfo.BadEolsCount, genconvInfo.EolsCount);
+    if (!convInfo.hasZeroByte) {
+        printf("%s", relativePath.c_str());
         if (bConvert) {
-            procFileStage(relativePath, eolType, true, genconvInfo, needed);
+            if (action==atAdd) {
+                addBOM8(relativePath);
+            }
+            else {
+                removeBOM8(relativePath);
+            }
             printf(" --- converted\n");
         }
         else printf("\n");
@@ -159,15 +160,13 @@ void procFile(string relativePath, EolType eolType, bool bConvert, bool bShowBin
 
 int procCommandLine(int argc, char * argv[])
 {
-    EolType eolType;
+    ActionType action;
     if (argc<2) return 1;
     string eolTypeStr = argv[1];
-    if (eolTypeStr=="unix")
-        eolType = etUnix;
-    else if (eolTypeStr=="win")
-        eolType = etWindows;
-    else if (eolTypeStr=="mac")
-        eolType = etMac;
+    if (eolTypeStr=="add")
+        action = atAdd;
+    else if (eolTypeStr=="remove")
+        action = atRemove;
     else return 2;
     if (argc<3) return 1;
     string masklist = argv[2];
@@ -193,25 +192,24 @@ int procCommandLine(int argc, char * argv[])
     else
         v = collectFiles(".", masks);
     for (auto fname: v)
-        procFile(fname, eolType, bConvert, bShowBinary);
+        procFile(fname, action, bConvert, bShowBinary);
     return 0;
 }
 
 int main(int argc, char * argv[]) {
     if (argc<2)
     {
-        cout << "help: eolconv --help   " << endl;
+        cout << "help: utf8bom --help   " << endl;
     } else if (string(argv[1])=="--help")
     {
         cout << "usage:" <<endl;
-        cout << "eolconv eolType maskList [r] [conv] [bin]" << endl;
-        cout << "eolType is one of {unix,win,mac}" << endl;
+        cout << "utf8bom [add/remove] maskList [r] [conv] [bin]" << endl;
         cout << "maskList is one mask or list divided by colon" << endl;
         cout << "r = recursive subdirectories" << endl;
         cout << "conv = convert, else only print files need convert" << endl << endl;
         cout << "bin = show binary files, containing byte 0" << endl << endl;
         cout << "note: on Linux Bash is needed backslash \\ before asterisk *" << endl;
         cout << "example:" <<endl;
-        cout << "eolconv unix \\*.cpp:\\*.h conv" << endl;
+        cout << "utf8bom remove \\*.tex conv" << endl;
     } else return procCommandLine(argc,argv);
 }
